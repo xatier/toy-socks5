@@ -174,16 +174,18 @@ func (s *SocksProxy) constructRemoteAddress() string {
 	} else if s.addressType == domainName {
 		// resolve domain name to ipv4
 		ips, err := net.LookupIP(s.FQDN)
-		if err != nil {
+		if err != nil || len(ips) == 0 {
 			log.Printf("Closing ... could not resolve FQDN %s", s.FQDN)
 			s.closeConnectionWithError(generalFailure)
 		}
-		log.Printf("Resolving %s:%d -> %s:%d", s.FQDN, s.port, ips[0], s.port)
+		if len(ips) > 0 {
+			log.Printf("Resolving %s:%d -> %s:%d", s.FQDN, s.port, ips[0], s.port)
 
-		remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
+			remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
 
-		// we are now IPv4
-		s.addressType = ipv4
+			// we are now IPv4
+			s.addressType = ipv4
+		}
 	} else {
 		log.Printf("Closing ... address type not supported")
 		s.closeConnectionWithError(addressTypeNotSupported)
@@ -208,6 +210,7 @@ func (s *SocksProxy) handleCommandConnect() []byte {
 		} else {
 			s.closeConnectionWithError(hostUnreachable)
 		}
+		return []byte{0}
 	}
 
 	bindAddress := remote.LocalAddr().(*net.TCPAddr)
@@ -306,8 +309,8 @@ func handle(conn net.Conn) {
 		log.Printf("Error on doReplyAction: %v", err)
 	}
 
-	log.Printf("Closing remote: %s", server.remote.RemoteAddr())
 	if server.remote != nil {
+		log.Printf("Closing remote: %s", server.remote.RemoteAddr())
 		server.remote.Close()
 	}
 }
