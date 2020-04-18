@@ -178,6 +178,7 @@ func (s *SocksProxy) constructRemoteAddress() string {
 			log.Printf("Closing ... could not resolve FQDN %s", s.FQDN)
 			s.closeConnectionWithError(generalFailure)
 		}
+		log.Printf("Resolving %s:%d -> %s:%d", s.FQDN, s.port, ips[0], s.port)
 
 		remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
 
