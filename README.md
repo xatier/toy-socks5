@@ -1,10 +1,11 @@
 # toy-socks5
 
-Toy sock5 implementation
+Toy sock5 implementation of [RFC 1928](https://tools.ietf.org/html/rfc1928).
 
 ## Run
 
-- IPv4 only
+- IPv4 only, IPv6 ... not implemented fully
+
 - `select.select` is very slow ...
 
 - The only difference between `socks5` and `socks5h` is hostname resolution. `curl(1)` manual has the following:
