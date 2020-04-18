@@ -11,7 +11,7 @@ import struct
 import time
 from typing import List, Optional, Tuple
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 # constants
 SOCKS_VERSION = 5
@@ -176,7 +176,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
 
     def _close_with_error(self, error: SocksReply) -> None:
         """Close the connection with an error reply."""
-        logging.debug(f'Closing connection with error={repr(error)}')
+        logging.info(f'Closing connection with error={repr(error)}')
         self.reply = error
         reply_payload = self.generate_failed_reply(error, self.address_type)
         self.request.sendall(reply_payload)
@@ -213,7 +213,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
             # the first octet of the address field contains the number of
             # octets of name that follow, there is no terminating NUL octet.
             domain_length = ord(self.request.recv(1))
-            address = self.request.recv(domain_length)
+            address = self.request.recv(domain_length).decode()
 
         elif self.address_type == SocksAddressType.IPV6:
             # the address is a version-6 IP address, with a length of 16 octets
@@ -228,6 +228,40 @@ class SocksProxy(socketserver.StreamRequestHandler):
     def _parse_port(self) -> int:
         """Parse port from the request header."""
         return struct.unpack('!H', self.request.recv(2))[0]
+
+    def _resolve_domain(self) -> None:
+        """
+        Resolve domain name to IPv4 address (locally)
+
+        Return first result from getaddrinfo
+        """
+        resolved = socket.getaddrinfo(
+            self.address,
+            self.port,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP
+        )
+
+        if resolved:
+            # socket.getaddrinfo returns a list of 5-tuples
+            # (family, type, proto, canonname, sockaddr)
+            # [
+            #    (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>,
+            #     6, '', ('64.170.98.42', 443)
+            #    ), ...
+            # ]
+            addr, port = resolved[0][4]
+            logging.info(
+                f'Resolving {self.address}:{self.port} -> {addr}:{port}'
+            )
+            self.address, self.port = addr, port
+        else:
+            raise socket.gaierror(
+                socket.EAI_NODATA,
+                'DNS lookup of {self.address} returned nothing'
+            )
+
 
     def _handle_greetings(self) -> None:
         """
@@ -273,6 +307,18 @@ class SocksProxy(socketserver.StreamRequestHandler):
         self.address = self._parse_address()
         self.port = self._parse_port()
 
+        # resolve domain name
+        if self.address_type == SocksAddressType.DOMAINNAME:
+            try:
+                self._resolve_domain()
+
+            except socket.gaierror as e:
+                logging.error(f'DNS error: {e}')
+                self._close_with_error(SocksReply.GENERAL_FAILURE)
+
+            # we are IPv4 now
+            self.address_type = SocksAddressType.IPV4
+
     @staticmethod
     def _unpack_bind_address(bind_address: Tuple[str, int]) -> Tuple[int, int]:
         """Unpack bind address tuple to tuple of 2 integers."""
@@ -295,10 +341,13 @@ class SocksProxy(socketserver.StreamRequestHandler):
         try:
             self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.remote.connect((self.address, self.port))
-            logging.info(f'Connected to {self.address}:{self.port}')
 
             bind_address = self.remote.getsockname()
-            logging.info(f'Binding to {bind_address}')
+
+            logging.info(
+                f'Connected to {self.address}:{self.port}, '
+                f'binding to {bind_address}'
+            )
 
             addr, port = self._unpack_bind_address(bind_address)
 
