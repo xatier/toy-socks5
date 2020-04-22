@@ -255,6 +255,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
             logging.info(
                 f'Resolving {self.address}:{self.port} -> {addr}:{port}'
             )
+            self.domain_name = self.address
             self.address, self.port = addr, port
         else:
             raise socket.gaierror(
@@ -304,6 +305,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
         self.command = SocksCommand(cmd)
         self.address_type = SocksAddressType(address_type)
 
+        self.domain_name = None
         self.address = self._parse_address()
         self.port = self._parse_port()
 
@@ -422,7 +424,17 @@ class SocksProxy(socketserver.StreamRequestHandler):
         # establish data exchange, otherwise, no-op
         if self.command == SocksCommand.CONNECT:
             if self.reply == SocksReply.SUCCEEDED:
-                self._exchange_loop(self.request, self.remote)
+                try:
+                    self._exchange_loop(self.request, self.remote)
+                except ConnectionError as e:
+                    logging.debug(
+                        f'ConnectionError {e} happened '
+                        f'{self.request} {self.remote} {self.domain_name}'
+                    )
+                except Exception as e:
+                    logging.debug(
+                        f'Exception {e} happened {self.request} {self.remote}'
+                    )
             else:
                 logging.info(f'Error on CONNECT command')
                 self._close_with_error(SocksReply.GENERAL_FAILURE)
