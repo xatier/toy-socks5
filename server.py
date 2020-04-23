@@ -263,7 +263,6 @@ class SocksProxy(socketserver.StreamRequestHandler):
                 'DNS lookup of {self.address} returned nothing'
             )
 
-
     def _handle_greetings(self) -> None:
         """
         Handle greetings header.
@@ -272,7 +271,13 @@ class SocksProxy(socketserver.StreamRequestHandler):
         """
         # greeting header
         header = self.request.recv(2)
-        version, nmethods = struct.unpack("!BB", header)
+        try:
+            version, nmethods = struct.unpack("!BB", header)
+        except struct.error as e:
+            logging.error(f'header decode error: {e} header: {header}')
+            self._close_with_error(SocksReply.GENERAL_FAILURE)
+            return
+
         self._ensure_version(version)
         self._ensure_nmethods(nmethods)
 
@@ -315,7 +320,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
                 self._resolve_domain()
 
             except socket.gaierror as e:
-                logging.error(f'DNS error: {e}')
+                logging.error(f'DNS error: {e} address: {self.address}')
                 self._close_with_error(SocksReply.GENERAL_FAILURE)
 
             # we are IPv4 now
@@ -386,7 +391,9 @@ class SocksProxy(socketserver.StreamRequestHandler):
                 self._close_with_error(SocksReply.COMMAND_NOT_SUPPORTED)
 
         except Exception as err:
-            logging.error(f'{err} on command {repr(self.command)}')
+            logging.error(
+                f'{err} on command {repr(self.command)} address: {self.address}'
+            )
             self._close_with_error(SocksReply.GENERAL_FAILURE)
 
         return None
