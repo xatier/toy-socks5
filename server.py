@@ -271,11 +271,16 @@ class SocksProxy(socketserver.StreamRequestHandler):
         """
         # greeting header
         header = self.request.recv(2)
+        if len(header) < 2:
+            logging.error(f'Ill-formed header, close connection.')
+            self._close()
+            return
+
         try:
             version, nmethods = struct.unpack("!BB", header)
         except struct.error as e:
             logging.error(f'header decode error: {e} header: {header}')
-            self._close_with_error(SocksReply.GENERAL_FAILURE)
+            self._close()
             return
 
         self._ensure_version(version)
