@@ -231,7 +231,7 @@ class SocksProxy(socketserver.StreamRequestHandler):
 
     def _resolve_domain(self) -> None:
         """
-        Resolve domain name to IPv4 address (locally)
+        Resolve domain name to IPv4 address (locally).
 
         Return first result from getaddrinfo
         """
@@ -397,7 +397,8 @@ class SocksProxy(socketserver.StreamRequestHandler):
 
         except Exception as err:
             logging.error(
-                f'{err} on command {repr(self.command)} address: {self.address}'
+                f'{err} on command {repr(self.command)} '
+                f'address: {self.address}'
             )
             self._close_with_error(SocksReply.GENERAL_FAILURE)
 
