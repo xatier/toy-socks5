@@ -36,6 +36,19 @@ curl -v --socks5-hostname 127.0.0.1:1081 https://tools.ietf.org/html/rfc1928
 curl -v --proxy 'socks5h://127.0.0.1:1081' 'https://tools.ietf.org/html/rfc1928'
 ```
 
+- run with Vagrant and VirtualBox
+
+Known issue: Vagrant image for Archlinux starts [reflector-init.service](https://github.com/archlinux/arch-boxes/blob/master/http/install-common.sh#L31) before `sshd`, this takes a long time due to slow arch mirrors and prevents Vagrant from ssh'ing into the box until `sshd` starts.
+
+```bash
+# launch an Archlinux VM with port forwarding configured
+# see Vagrantfile for details
+./v.sh start
+
+# stop the VM
+./v.sh stop
+```
+
 ## TODO
 
 - Full IPv6 support
