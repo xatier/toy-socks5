@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -316,7 +317,13 @@ func handle(conn net.Conn) {
 }
 
 func serve() {
-	service := fmt.Sprintf("localhost:%d", port)
+	// use --global flag to listen on 0.0.0.0
+	bindAddress := "localhost"
+	if len(os.Args) == 2 && os.Args[1] == "--global" {
+		bindAddress = "0.0.0.0"
+	}
+
+	service := fmt.Sprintf("%s:%d", bindAddress, port)
 	log.Printf("Running on: %s", service)
 
 	listener, err := net.Listen("tcp", service)

@@ -8,6 +8,7 @@ import select
 import socket
 import socketserver
 import struct
+import sys
 import time
 from typing import List, Optional, Tuple
 
@@ -501,10 +502,16 @@ class SocksProxy(socketserver.StreamRequestHandler):
 
 
 def main() -> None:
+
+    # use --global flag to listen on 0.0.0.0
+    bind_address = '127.0.0.1'
+    if len(sys.argv) == 2 and sys.argv[1] == '--global':
+        bind_address = '0.0.0.0'
+
     with socketserver.ThreadingTCPServer(
-        ('127.0.0.1', PORT), SocksProxy
+        (bind_address, PORT), SocksProxy
     ) as server:
-        logging.info(f'Running on port:{PORT}')
+        logging.info(f'Running on {bind_address}:{PORT}')
         server.serve_forever()
 
 
