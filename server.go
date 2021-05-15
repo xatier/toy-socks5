@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 )
 
 // constants
@@ -266,24 +267,22 @@ func (s *SocksProxy) doReplyAction() error {
 
 // exchange data between two net.Conn
 func exchange(client net.Conn, remote net.Conn) error {
-	proxy := func(dst net.Conn, src net.Conn, errCh chan error) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	proxy := func(dst net.Conn, src net.Conn) {
 		_, err := io.Copy(dst, src)
 		if err != nil {
 			log.Printf("Error on proxy: %v", err)
 		}
-		errCh <- err
+		dst.(*net.TCPConn).CloseWrite()
+		wg.Done()
 	}
 
-	errCh := make(chan error, 2)
-	go proxy(remote, client, errCh)
-	go proxy(client, remote, errCh)
+	go proxy(remote, client)
+	go proxy(client, remote)
 
-	// wait until proxy complete
-	for i := 0; i < 2; i++ {
-		if err := <-errCh; err != nil {
-			return err
-		}
-	}
+	wg.Wait()
 
 	return nil
 }
