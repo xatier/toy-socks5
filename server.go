@@ -2,11 +2,11 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"os"
 	"strings"
 )
 
@@ -317,9 +317,12 @@ func handle(conn net.Conn) {
 }
 
 func serve() {
-	// use --global flag to listen on 0.0.0.0
+	isGlobal := flag.Bool("global", false, "Use -global to listen on 0.0.0.0")
+	flag.Parse()
+
+	// use -global flag to listen on 0.0.0.0
 	bindAddress := "localhost"
-	if len(os.Args) == 2 && os.Args[1] == "--global" {
+	if *isGlobal {
 		bindAddress = "0.0.0.0"
 	}
 
