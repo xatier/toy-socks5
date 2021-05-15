@@ -7,7 +7,7 @@ up() {
     vagrant up
 
     # this is not ideal, see: https://stackoverflow.com/a/27327955
-    vagrant ssh -c 'nohup ~/toy-socks5/toy-socks5 --global 2>&1 >/srv/wg.log & sleep 1'
+    vagrant ssh -c 'nohup ~/toy-socks5/toy-socks5 -global 2>&1 >/srv/wg.log & sleep 1'
     vagrant ssh -c 'tail -f /srv/wg.log'
 }
 
