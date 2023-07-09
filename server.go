@@ -1,12 +1,12 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 )
@@ -55,6 +55,31 @@ const (
 	addressTypeNotSupported = socksReply(0x08)
 )
 
+func (r socksReply) String() string {
+	switch r {
+	case succeeded:
+		return "succeeded"
+	case generalFailure:
+		return "general failure"
+	case connectionNotAllowed:
+		return "connection not allowed"
+	case networkUnreachable:
+		return "network unreachable"
+	case hostUnreachable:
+		return "host unreachable"
+	case connectionRefused:
+		return "connection refused"
+	case ttlExpired:
+		return "ttl expired"
+	case commandNotSupported:
+		return "command not supported"
+	case addressTypeNotSupported:
+		return "address type not supported"
+	default:
+		return fmt.Sprintf("unknown(%d)", r)
+	}
+}
+
 // SocksProxy handles the connection
 type SocksProxy struct {
 	version     uint8
@@ -62,7 +87,7 @@ type SocksProxy struct {
 	command     socksCommand
 	addressType socksAddressType
 	reply       socksReply
-	IP          net.IP
+	IP          netip.Addr
 	FQDN        string
 	port        uint16
 	remote      net.Conn
@@ -74,19 +99,28 @@ func NewProxy(c net.Conn) *SocksProxy {
 	s := SocksProxy{}
 	s.version = uint8(5)
 	s.conn = c
-	s.IP = nil
+	s.IP = netip.Addr{}
 	return &s
 }
 
 func (s *SocksProxy) closeConnection() {
+	if s.conn == nil {
+		return
+	}
 	log.Printf("Closing connection from %s", s.conn.RemoteAddr())
 	s.conn.Close()
+	s.conn = nil
 }
 
-func (s *SocksProxy) closeConnectionWithError(err socksReply) {
-	log.Printf("Closing connection with error %v", err)
-	s.reply = err
-	payload := s.generateFailedReply([]byte{0}, 0)
+func (s *SocksProxy) closeConnectionWithError(reply socksReply) {
+	log.Printf("Closing connection with error %v", reply)
+	// avoid write if connection is already closed
+	if s.conn == nil {
+		return
+	}
+	s.reply = reply
+	payload := s.generateFailedReply(netip.MustParseAddrPort("0.0.0.0:0"))
+
 	s.conn.Write(payload)
 	s.closeConnection()
 }
@@ -117,7 +151,7 @@ func (s *SocksProxy) parseAddress() {
 	if s.addressType == ipv4 {
 		buf := make([]byte, 4)
 		s.conn.Read(buf)
-		s.IP = net.IP(buf)
+		s.IP = netip.AddrFrom4(*(*[4]byte)(buf))
 	} else if s.addressType == domainName {
 		domainLength := []byte{0}
 		s.conn.Read(domainLength)
@@ -127,9 +161,9 @@ func (s *SocksProxy) parseAddress() {
 	} else if s.addressType == ipv6 {
 		buf := make([]byte, 16)
 		s.conn.Read(buf)
-		s.IP = net.IP(buf)
+		s.IP = netip.AddrFrom16(*(*[16]byte)(buf))
 	} else {
-		log.Printf("Unknown address type")
+		log.Printf("Unknown address type (%d)", s.addressType)
 		s.closeConnectionWithError(addressTypeNotSupported)
 	}
 }
@@ -140,32 +174,46 @@ func (s *SocksProxy) parsePort() {
 	s.port = (uint16(buf[0]) << 8) | uint16(buf[1])
 }
 
-func (s *SocksProxy) handleGreetings() {
+func (s *SocksProxy) handleGreetings() error {
 	version := []byte{0}
 	nmethod := []byte{0}
 	s.conn.Read(version)
 	s.conn.Read(nmethod)
 
 	s.ensureVersion(version[0])
+	if s.conn == nil {
+		return fmt.Errorf("connection closed due to invalid version(%d)", version[0])
+	}
 	s.ensureNMethod(nmethod[0])
+	if s.conn == nil {
+		return fmt.Errorf("connection closed due to invalid nmethod(%d)", nmethod[0])
+	}
 
 	s.methods = s.getAvailableMethods(nmethod[0])
 
 	s.conn.Write([]byte{socksVersion, uint8(noAuth)})
+	return nil
 }
 
-func (s *SocksProxy) handleRequestHeader() {
+func (s *SocksProxy) handleRequestHeader() error {
 	// version, command, RESERVED, address_type
 	header := []byte{0, 0, 0, 0}
 	s.conn.Read(header)
 
 	s.ensureVersion(header[0])
+	if s.conn == nil {
+		return fmt.Errorf("connection closed due to invalid version(%d)", header[0])
+	}
 	s.command = socksCommand(header[1])
 	s.addressType = socksAddressType(header[3])
 
 	// may set s.IP or s.FQDN
 	s.parseAddress()
+	if s.conn == nil {
+		return fmt.Errorf("connection closed due to invalid address type(%d)", header[3])
+	}
 	s.parsePort()
+	return nil
 }
 
 // remote address to be dialed
@@ -181,7 +229,7 @@ func (s *SocksProxy) constructRemoteAddress() string {
 			s.closeConnectionWithError(generalFailure)
 		}
 		if len(ips) > 0 {
-			log.Printf("Resolving %s:%d -> %s:%d", s.FQDN, s.port, ips[0], s.port)
+			log.Printf("Resolving %s:%d -> %s:%d %v", s.FQDN, s.port, ips[0], s.port, ips)
 
 			remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
 
@@ -189,21 +237,23 @@ func (s *SocksProxy) constructRemoteAddress() string {
 			s.addressType = ipv4
 		}
 	} else {
-		log.Printf("Closing ... address type not supported")
+		log.Printf("Closing ... address type (%d) not supported", s.addressType)
 		s.closeConnectionWithError(addressTypeNotSupported)
 	}
 
 	return remoteAddress
 }
 
-func (s *SocksProxy) handleCommandConnect() []byte {
+func (s *SocksProxy) handleCommandConnect() ([]byte, error) {
 	remoteAddress := s.constructRemoteAddress()
+	// server may be closed early due to error
+	if s.conn == nil {
+		return nil, fmt.Errorf("Connection closed early")
+	}
 	remote, err := net.Dial("tcp", remoteAddress)
 	s.remote = remote
 
 	if err != nil {
-		log.Printf("Failed to dial remote: %s", remoteAddress)
-
 		msg := err.Error()
 		if strings.Contains(msg, "network is unreachable") {
 			s.closeConnectionWithError(networkUnreachable)
@@ -212,17 +262,24 @@ func (s *SocksProxy) handleCommandConnect() []byte {
 		} else {
 			s.closeConnectionWithError(hostUnreachable)
 		}
-		return []byte{0}
+		return nil, fmt.Errorf("Failed to dial remote: %s: %v", remoteAddress, err)
 	}
 
 	bindAddress := remote.LocalAddr().(*net.TCPAddr)
 	log.Printf("Connecting to: %s, binding to: %v", remoteAddress, bindAddress)
 
 	s.reply = succeeded
-	return s.generateSucceededReply(bindAddress.IP, bindAddress.Port)
+	return s.generateSucceededReply(bindAddress.AddrPort()), nil
 }
 
-func (s *SocksProxy) generateReply(ip net.IP, port int) []byte {
+func (s *SocksProxy) generateReply(addrPort netip.AddrPort) []byte {
+	if !addrPort.IsValid() {
+		log.Printf("Invalid address: %v", addrPort)
+		return []byte{}
+	}
+
+	ip := addrPort.Addr().AsSlice()
+	port := addrPort.Port()
 	payload := []byte{socksVersion, uint8(s.reply), 0, uint8(s.addressType)}
 	payload = append(payload, ip...)
 	payload = append(payload, uint8(port>>8))
@@ -230,27 +287,32 @@ func (s *SocksProxy) generateReply(ip net.IP, port int) []byte {
 	return payload
 }
 
-func (s *SocksProxy) generateSucceededReply(ip net.IP, port int) []byte {
-	return s.generateReply(ip, port)
+func (s *SocksProxy) generateSucceededReply(addrPort netip.AddrPort) []byte {
+	return s.generateReply(addrPort)
 }
-func (s *SocksProxy) generateFailedReply(ip net.IP, port int) []byte {
-	return s.generateReply(ip, port)
+
+func (s *SocksProxy) generateFailedReply(addrPort netip.AddrPort) []byte {
+	return s.generateReply(addrPort)
 }
 
 func (s *SocksProxy) handleRequestCommand() ([]byte, error) {
 	if s.command == connect {
-		return s.handleCommandConnect(), nil
+		reply, err := s.handleCommandConnect()
+		if err != nil {
+			return nil, err
+		}
+		return reply, nil
 	} else if s.command == bind {
-		log.Printf("Bind command is not supproted")
+		log.Printf("Bind command is not supported")
 		s.closeConnectionWithError(commandNotSupported)
 	} else if s.command == udpAssociate {
-		log.Printf("UDP associate command is not supproted")
+		log.Printf("UDP associate command is not supported")
 		s.closeConnectionWithError(commandNotSupported)
 	} else {
 		log.Printf("Unknown command")
 		s.closeConnectionWithError(commandNotSupported)
 	}
-	return nil, errors.New("Unsupported command")
+	return nil, fmt.Errorf("Unsupported command (%d)", s.command)
 }
 
 func (s *SocksProxy) doReplyAction() error {
@@ -293,20 +355,32 @@ func handle(conn net.Conn) {
 
 	log.Printf("Accepting connection from: %s", conn.RemoteAddr())
 
-	server.handleGreetings()
-	server.handleRequestHeader()
+	err := server.handleGreetings()
+	if err != nil {
+		log.Printf("Connection closed early on handleGreetings, %v", err)
+		return
+	}
+	err = server.handleRequestHeader()
+	if err != nil {
+		log.Printf("Connection closed early on handleRequestHeader, %v", err)
+		return
+	}
+
 	payload, err := server.handleRequestCommand()
 	if err != nil {
 		log.Printf("Error on handleRequestCommand: %v", err)
+		return
 	}
 	if len(payload) > 0 {
 		if _, err := server.conn.Write(payload); err != nil {
 			log.Printf("Error on Sending back request: %v", err)
+			return
 		}
 	}
 
 	if err := server.doReplyAction(); err != nil {
 		log.Printf("Error on doReplyAction: %v", err)
+		return
 	}
 
 	if server.remote != nil {
