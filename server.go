@@ -180,7 +180,8 @@ func (s *SocksProxy) handleGreetings() error {
 	s.conn.Read(version)
 	s.conn.Read(nmethod)
 
-	s.ensureVersion(version[0])
+	log.Printf("handleGreetings: version=%d", version[0])
+	//s.ensureVersion(version[0])
 	if s.conn == nil {
 		return fmt.Errorf("connection closed due to invalid version(%d)", version[0])
 	}
