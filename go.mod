@@ -1,3 +1,3 @@
 module github.com/xatier/toy-socks5
 
-go 1.20
+go 1.23
