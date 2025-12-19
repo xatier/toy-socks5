@@ -331,7 +331,6 @@ func (s *SocksProxy) doReplyAction() error {
 // exchange data between two net.Conn
 func exchange(client net.Conn, remote net.Conn) error {
 	var wg sync.WaitGroup
-	wg.Add(2)
 
 	proxy := func(dst net.Conn, src net.Conn) {
 		_, err := io.Copy(dst, src)
@@ -339,11 +338,10 @@ func exchange(client net.Conn, remote net.Conn) error {
 			log.Printf("Error on proxy: %v", err)
 		}
 		dst.(*net.TCPConn).CloseWrite()
-		wg.Done()
 	}
 
-	go proxy(remote, client)
-	go proxy(client, remote)
+	wg.Go(func() { proxy(remote, client) })
+	wg.Go(func() { proxy(client, remote) })
 
 	wg.Wait()
 
