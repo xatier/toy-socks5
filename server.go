@@ -220,8 +220,10 @@ func (s *SocksProxy) handleRequestHeader() error {
 // remote address to be dialed
 func (s *SocksProxy) constructRemoteAddress() string {
 	remoteAddress := ""
-	if s.addressType == ipv4 || s.addressType == ipv6 {
+	if s.addressType == ipv4 {
 		remoteAddress = fmt.Sprintf("%v:%d", s.IP, s.port)
+	} else if s.addressType == ipv6 {
+		remoteAddress = fmt.Sprintf("[%v]:%d", s.IP, s.port)
 	} else if s.addressType == domainName {
 		// resolve domain name to ipv4
 		ips, err := net.LookupIP(s.FQDN)
