@@ -140,7 +140,7 @@ func (s *SocksProxy) ensureNMethod(nmethod uint8) {
 func (s *SocksProxy) getAvailableMethods(nmethod uint8) []uint8 {
 	methods := make([]uint8, nmethod)
 	m := []byte{0}
-	for i := uint8(0); i < nmethod; i++ {
+	for i := range nmethod {
 		s.conn.Read(m)
 		methods[i] = m[0]
 	}
@@ -232,12 +232,23 @@ func (s *SocksProxy) constructRemoteAddress() string {
 			s.closeConnectionWithError(generalFailure)
 		}
 		if len(ips) > 0 {
-			log.Printf("Resolving %s:%d -> %s:%d %v", s.FQDN, s.port, ips[0], s.port, ips)
+			// attempt to convert to IPv4
+			if ips[0].To4() != nil {
+				log.Printf("Resolving %s:%d -> (IPv4) %s:%d %v", s.FQDN, s.port, ips[0], s.port, ips)
 
-			remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
+				remoteAddress = fmt.Sprintf("%s:%d", ips[0], s.port)
 
-			// we are now IPv4
-			s.addressType = ipv4
+				// we are now IPv4
+				s.addressType = ipv4
+			} else {
+				// should be IPv6
+				log.Printf("Resolving %s:%d -> (IPv6) [%s]:%d %v", s.FQDN, s.port, ips[0], s.port, ips)
+
+				remoteAddress = fmt.Sprintf("[%s]:%d", ips[0], s.port)
+
+				// we are now IPv6
+				s.addressType = ipv6
+			}
 		}
 	} else {
 		log.Printf("Closing ... address type (%d) not supported", s.addressType)
